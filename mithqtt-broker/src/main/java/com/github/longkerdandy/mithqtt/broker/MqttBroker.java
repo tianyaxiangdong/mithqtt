@@ -20,14 +20,21 @@ import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.SslProvider;
+import io.netty.handler.ssl.SupportedCipherSuiteFilter;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
 import org.apache.commons.configuration.PropertiesConfiguration;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.net.ssl.SSLException;
 import java.io.File;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * MQTT Bridge
@@ -87,7 +94,10 @@ public class MqttBroker {
         final int keepAlive = brokerConfig.getInt("mqtt.keepalive.default");
         final int keepAliveMax = brokerConfig.getInt("mqtt.keepalive.max");
         final boolean ssl = brokerConfig.getBoolean("mqtt.ssl.enabled");
-        final SslContext sslContext = ssl ? SslContextBuilder.forServer(new File(brokerConfig.getString("mqtt.ssl.certPath")), new File(brokerConfig.getString("mqtt.ssl.keyPath")), brokerConfig.getString("mqtt.ssl.keyPassword")).build() : null;
+
+        //  final SslContext sslContext = ssl ? SslContextBuilder.forServer(new File(brokerConfig.getString("mqtt.ssl.certPath")), new File(brokerConfig.getString("mqtt.ssl.keyPath")), brokerConfig.getString("mqtt.ssl.keyPassword")).build() : null;
+        final SslContext sslContext = ssl ? initSslContext(brokerConfig.getString("mqtt.ssl.certPath"), brokerConfig.getString("mqtt.ssl.keyPath"), brokerConfig.getString("mqtt.ssl.keyPassword"), StringUtils.equals(brokerConfig.getString("mqtt.ssl.type"), "OpenSSL")) : null;
+
         final String host = brokerConfig.getString("mqtt.host");
         final int port = ssl ? brokerConfig.getInt("mqtt.ssl.port") : brokerConfig.getInt("mqtt.port");
 
@@ -146,5 +156,30 @@ public class MqttBroker {
         // Wait until the server socket is closed.
         // Do this to gracefully shut down the server.
         f.channel().closeFuture().sync();
+    }
+
+    private static SslContext initSslContext(String serverCertPath, String serverKeyPath, String serverPass, boolean isOpenSsl) {
+
+        List<String> ciphers = Collections.unmodifiableList(Arrays
+                .asList("ECDHE-RSA-AES128-SHA", "ECDHE-RSA-AES256-SHA", "AES128-SHA", "AES256-SHA", "DES-CBC3-SHA"));
+
+        try {
+            if (isOpenSsl) {
+                logger.warn("Using native openSSL provider.");
+            }
+
+            File serverCert = new File(serverCertPath);
+            File serverKey = new File(serverKeyPath);
+
+            final SslContextBuilder builder = SslContextBuilder.forServer(serverCert, serverKey, serverPass);
+            builder.sslProvider(isOpenSsl ? SslProvider.OPENSSL : SslProvider.JDK);
+            //Both(client,server) use openssl @ http://www.tuicool.com/articles/iIJn6zi
+            builder.ciphers(ciphers, SupportedCipherSuiteFilter.INSTANCE);
+            return builder.build();
+
+        } catch (SSLException | IllegalArgumentException e) {
+            logger.error("Error initializing ssl context. Reason : {}", e.getMessage());
+            throw new RuntimeException(e.getMessage());
+        }
     }
 }
